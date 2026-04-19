@@ -1,0 +1,46 @@
+{
+  "database": {
+    "ip": "192.168.1.100",
+    "port": 1521,
+    "service_name": "ORCL",
+    "user": "his_user",
+    "pwd": "his_password"
+  },
+  "api_list": [
+    {
+      "url": "http://192.168.1.100:8080/his/api/health",
+      "expected_code": 200,
+      "name": "健康检查接口",
+      "method": "GET",
+      "timeout": 10
+    }
+  ],
+  "log_rules": {
+    "log_dirs": [
+      "D:\\logs"
+    ],
+    "keywords": [
+      "ORA-",
+      "ERROR",
+      "Exception",
+      "Timeout",
+      "Failed"
+    ],
+    "context_lines": 10
+  },
+  "env_check": {
+    "disk_threshold": 80,
+    "ntp_servers": [
+      "ntp.aliyun.com",
+      "time.windows.com"
+    ],
+    "time_tolerance_seconds": 300,
+    "system_variables": []
+  },
+  "diagnostic_rules": {
+    "ORA-01017": "数据库用户名或密码错误，请检查 db_config 配置。",
+    "ORA-12541": "监听程序未启动，请检查数据库服务器 TNS 状态和监听器服务。",
+    "ConnectTimeout": "网络连接超时，请检查防火墙端口是否开放。",
+    "Permission denied": "文件读写权限不足，请尝试以管理员身份运行。"
+  }
+}
