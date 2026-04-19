@@ -56,7 +56,15 @@ DEFAULT_CONFIG = {
                 "key_column": "xtmc",
                 "value_column": "xtsz",
                 "expected_value": "1",
-                "description": "1=启用拼音码自动转换"
+                "description": "1=启用拼音码自动转换，开启后将自动检查常用项目拼音码空值"
+            },
+            {
+                "name": "电测听小结展示方式",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "1=取计算值（需要年龄修正表基础数据）, 0=取录入值"
             },
             {
                 "name": "默认体检单位",
@@ -65,6 +73,22 @@ DEFAULT_CONFIG = {
                 "value_column": "xtsz",
                 "expected_value": "",
                 "description": "系统默认体检单位代码"
+            },
+            {
+                "name": "门诊收费是否启用",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "门诊收费模块开关"
+            },
+            {
+                "name": "住院收费是否启用",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "住院收费模块开关"
             }
         ]
     },

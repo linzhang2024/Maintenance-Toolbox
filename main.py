@@ -11,9 +11,9 @@ import argparse
 from typing import Dict, Any, List
 
 from utils import ConfigManager, Status, get_status_color, get_status_text, format_timestamp
-from checker import EnvironmentScanner, ApiChecker, DatabaseChecker, CheckResult, PortProbe
+from checker import EnvironmentScanner, ApiChecker, DatabaseChecker, CheckResult, PortProbe, NetworkDiagnostic
 from logger import LogAnalyzer
-from db_handler import get_driver_info, DATABASE_HELP_TEXT
+from db_handler import get_driver_info, DATABASE_HELP_TEXT, get_python_env_info
 
 
 class HISHelperTool:
@@ -25,19 +25,22 @@ class HISHelperTool:
         self.log_analyzer = None
         self.html_report = None
         self.driver_info = get_driver_info()
+        self.python_env_info = get_python_env_info()
     
     def initialize(self) -> bool:
         print(f"{'='*60}")
-        print(f"      HIS 实施辅助工具套件 v1.1")
+        print(f"      HIS 实施辅助工具套件 v1.2")
         print(f"{'='*60}")
         print(f"[{format_timestamp()}] 初始化...")
         
-        print(f"[{format_timestamp()}] Oracle 驱动: {'可用' if self.driver_info['available'] else '未安装'}", end='')
-        if self.driver_info['driver_name']:
-            print(f" ({self.driver_info['driver_name']})")
+        print(f"[{format_timestamp()}] Python 版本: {self.python_env_info['python_version_short']}")
+        print(f"[{format_timestamp()}] Oracle 驱动: ", end='')
+        if self.driver_info['available']:
+            driver_mode = self.driver_info.get('driver_mode', 'unknown')
+            print(f"✅ 可用 ({self.driver_info['driver_name']} - {driver_mode} 模式)")
         else:
-            print("")
-            print(f"  💡 提示: 请安装 oracledb 或 cx_Oracle 以启用数据库检查")
+            print(f"❌ 未安装")
+            print(f"  💡 提示: 请运行 'pip install oracledb' 安装驱动（无需 Instant Client）")
         
         if not os.path.exists(self.config_path):
             print(f"[{format_timestamp()}] 配置文件不存在，正在创建默认配置...")
@@ -66,7 +69,8 @@ class HISHelperTool:
             'database': {},
             'api': {},
             'log': {},
-            'driver_info': self.driver_info
+            'driver_info': self.driver_info,
+            'python_env_info': self.python_env_info
         }
         
         self._check_environment()
@@ -93,6 +97,16 @@ class HISHelperTool:
             status_color = self._get_status_console_color(result.status)
             status_text = get_status_text(result.status)
             print(f"  {status_color}[{status_text}] {result.name}: {result.message}")
+            
+            if result.suggestion:
+                print(f"     💡 建议: {result.suggestion}")
+            
+            details = result.details
+            if name == 'pinyin_code_check' and details.get('empty_count', 0) > 0:
+                tables = details.get('tables_checked', [])
+                for table in tables:
+                    if table.get('empty_count', 0) > 0:
+                        print(f"     📋 {table['table']}: {table['empty_count']} 条记录拼音码为空")
         
         print(f"[{format_timestamp()}] [环境检查] 完成")
     
@@ -165,7 +179,24 @@ class HISHelperTool:
                     print(f"    {status_color}[{status_text}] {name}: {result.message}")
                     
                     details = result.details
-                    if details.get('port_scan'):
+                    
+                    if details.get('ping_result'):
+                        ping_result = details['ping_result']
+                        if ping_result.get('success'):
+                            rtt = ping_result.get('avg_rtt_ms', 'N/A')
+                            print(f"       📡 Ping 通 (平均 {rtt}ms)")
+                        else:
+                            print(f"       📡 Ping 不通")
+                    
+                    if details.get('network_diagnostic'):
+                        diag = details['network_diagnostic']
+                        suggestions = diag.get('suggestions', [])
+                        if suggestions:
+                            print(f"       🤔 网络诊断建议:")
+                            for suggestion in suggestions:
+                                print(f"         {suggestion}")
+                    
+                    if details.get('port_scan') and not details.get('network_diagnostic'):
                         port_scan = details['port_scan']
                         print(f"       📡 端口探测 ({port_scan['host']}):")
                         for port_str, port_info in port_scan['ports'].items():
@@ -591,6 +622,111 @@ class HISHelperTool:
             overflow-y: auto;
             white-space: pre;
         }}
+        .tab-container {{
+            margin-top: 20px;
+        }}
+        .tab-nav {{
+            display: flex;
+            border-bottom: 2px solid #eee;
+            margin-bottom: 20px;
+        }}
+        .tab-nav button {{
+            padding: 12px 24px;
+            border: none;
+            background: none;
+            font-size: 14px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.3s;
+        }}
+        .tab-nav button:hover {{
+            color: #667eea;
+        }}
+        .tab-nav button.active {{
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: bold;
+        }}
+        .tab-content {{
+            display: none;
+        }}
+        .tab-content.active {{
+            display: block;
+        }}
+        .env-card {{
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }}
+        .env-card h4 {{
+            color: #1a1a2e;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }}
+        .env-info-row {{
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed #eee;
+        }}
+        .env-info-row:last-child {{
+            border-bottom: none;
+        }}
+        .env-info-label {{
+            color: #6c757d;
+            font-weight: 500;
+        }}
+        .env-info-value {{
+            color: #1a1a2e;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+        }}
+        .driver-status-badge {{
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 12px;
+        }}
+        .driver-status-badge.available {{
+            background: #d4edda;
+            color: #155724;
+        }}
+        .driver-status-badge.unavailable {{
+            background: #f8d7da;
+            color: #721c24;
+        }}
+        .package-list {{
+            max-height: 300px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #eee;
+        }}
+        .package-item {{
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 15px;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }}
+        .package-item:last-child {{
+            border-bottom: none;
+        }}
+        .package-item:hover {{
+            background: #f8f9fa;
+        }}
+        .package-name {{
+            color: #1a1a2e;
+        }}
+        .package-version {{
+            color: #6c757d;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }}
     </style>
 </head>
 <body>
@@ -608,14 +744,27 @@ class HISHelperTool:
             {self._build_summary_cards()}
         </div>
         
-        {self._build_environment_section()}
-        {self._build_database_section()}
-        {self._build_api_section()}
-        {self._build_log_section()}
-        {self._build_fix_guide_section()}
+        <div class="tab-container">
+            <div class="tab-nav">
+                <button class="active" onclick="switchTab('main-checks')">📋 检查结果</button>
+                <button onclick="switchTab('env-compat')">🔧 环境兼容性</button>
+            </div>
+            
+            <div id="main-checks" class="tab-content active">
+                {self._build_environment_section()}
+                {self._build_database_section()}
+                {self._build_api_section()}
+                {self._build_log_section()}
+                {self._build_fix_guide_section()}
+            </div>
+            
+            <div id="env-compat" class="tab-content">
+                {self._build_env_compatibility_section()}
+            </div>
+        </div>
         
         <div class="footer">
-            HIS 实施辅助工具套件 v1.1 | 报告生成于 {self.results.get('run_time', '未知')}
+            HIS 实施辅助工具套件 v1.2 | 报告生成于 {self.results.get('run_time', '未知')}
         </div>
     </div>
     
@@ -627,6 +776,17 @@ class HISHelperTool:
                 this.textContent = content.classList.contains('show') ? '收起详情 ▲' : '查看详情 ▼';
             }});
         }});
+        
+        function switchTab(tabId) {{
+            document.querySelectorAll('.tab-content').forEach(el => {{
+                el.classList.remove('active');
+            }});
+            document.querySelectorAll('.tab-nav button').forEach(el => {{
+                el.classList.remove('active');
+            }});
+            document.getElementById(tabId).classList.add('active');
+            event.target.classList.add('active');
+        }}
     </script>
 </body>
 </html>"""
@@ -997,6 +1157,82 @@ class HISHelperTool:
                     检测到未安装 Oracle 数据库驱动，以下是安装指南：
                 </p>
                 <pre>{help_text}</pre>
+            </div>
+        </div>
+        """
+    
+    def _build_env_compatibility_section(self) -> str:
+        python_env = self.python_env_info
+        driver_info = self.driver_info
+        
+        driver_status = 'available' if driver_info.get('available') else 'unavailable'
+        driver_status_text = '✅ 已安装' if driver_info.get('available') else '❌ 未安装'
+        driver_name = driver_info.get('driver_name', 'N/A')
+        driver_mode = driver_info.get('driver_mode', 'N/A')
+        
+        packages = python_env.get('installed_packages', [])
+        package_html = ''
+        for pkg in packages:
+            package_html += f"""
+                <div class="package-item">
+                    <span class="package-name">{pkg['name']}</span>
+                    <span class="package-version">{pkg['version']}</span>
+                </div>
+            """
+        
+        return f"""
+        <div class="section">
+            <h2>🔧 环境兼容性</h2>
+            
+            <div class="env-card">
+                <h4>🐍 Python 环境信息</h4>
+                <div class="env-info-row">
+                    <span class="env-info-label">Python 版本</span>
+                    <span class="env-info-value">{python_env.get('python_version_short', 'N/A')}</span>
+                </div>
+                <div class="env-info-row">
+                    <span class="env-info-label">完整版本</span>
+                    <span class="env-info-value">{python_env.get('python_version', 'N/A')}</span>
+                </div>
+                <div class="env-info-row">
+                    <span class="env-info-label">操作系统</span>
+                    <span class="env-info-value">{python_env.get('platform', 'N/A')}</span>
+                </div>
+                <div class="env-info-row">
+                    <span class="env-info-label">系统类型</span>
+                    <span class="env-info-value">{python_env.get('system', 'N/A')}</span>
+                </div>
+                <div class="env-info-row">
+                    <span class="env-info-label">架构</span>
+                    <span class="env-info-value">{python_env.get('machine', 'N/A')} ({python_env.get('architecture', 'N/A')})</span>
+                </div>
+                <div class="env-info-row">
+                    <span class="env-info-label">Python 路径</span>
+                    <span class="env-info-value">{python_env.get('executable', 'N/A')}</span>
+                </div>
+            </div>
+            
+            <div class="env-card">
+                <h4>📦 Oracle 数据库驱动</h4>
+                <div class="env-info-row">
+                    <span class="env-info-label">驱动状态</span>
+                    <span class="driver-status-badge {driver_status}">{driver_status_text}</span>
+                </div>
+                <div class="env-info-row">
+                    <span class="env-info-label">驱动名称</span>
+                    <span class="env-info-value">{driver_name}</span>
+                </div>
+                <div class="env-info-row">
+                    <span class="env-info-label">连接模式</span>
+                    <span class="env-info-value">{driver_mode}</span>
+                </div>
+            </div>
+            
+            <div class="env-card">
+                <h4>📋 已安装包列表 ({len(packages)} 个)</h4>
+                <div class="package-list">
+                    {package_html}
+                </div>
             </div>
         </div>
         """
