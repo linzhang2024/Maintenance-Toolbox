@@ -532,6 +532,16 @@ class HISHelperTool:
             padding: 20px;
             margin-top: 20px;
         }}
+        .fix-item {{
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px dashed #ffc107;
+        }}
+        .fix-item:last-child {{
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }}
         .fix-guide h4 {{
             color: #856404;
             margin-bottom: 15px;
@@ -1143,20 +1153,63 @@ class HISHelperTool:
         """
     
     def _build_fix_guide_section(self) -> str:
-        if self.driver_info.get('available'):
+        driver_available = self.driver_info.get('available')
+        package_warning = self.python_env_info.get('package_warning')
+        
+        if driver_available and not package_warning:
             return ''
         
         help_text = DATABASE_HELP_TEXT.strip()
         
+        guide_parts = []
+        
+        if not driver_available:
+            guide_parts.append(f"""
+                <div class="fix-item">
+                    <h4>⚠️ Oracle 数据库驱动未安装</h4>
+                    <p style="margin-bottom: 15px; color: #856404;">
+                        检测到未安装 Oracle 数据库驱动，数据库功能将被跳过。
+                    </p>
+                    <pre>{help_text}</pre>
+                </div>
+            """)
+        
+        if package_warning:
+            guide_parts.append(f"""
+                <div class="fix-item">
+                    <h4>⚠️ Python 包信息获取失败</h4>
+                    <p style="margin-bottom: 15px; color: #856404;">
+                        无法获取已安装包列表，可能是 setuptools 版本过低导致 pkg_resources 不可用。
+                    </p>
+                    <pre>【解决方案】
+
+1. 升级 setuptools（推荐）：
+   pip install --upgrade setuptools
+
+2. 或安装 importlib_metadata 兼容包：
+   pip install importlib_metadata
+
+3. 验证修复：
+   python -c "import importlib.metadata; print('OK: importlib.metadata 可用')"
+   或
+   python -c "import pkg_resources; print('OK: pkg_resources 可用')"
+
+【问题原因】
+- Python 3.8+ 内置 importlib.metadata
+- 旧版 Python 需要 pkg_resources（通过 setuptools 提供）
+- setuptools 版本过低可能导致 pkg_resources 不可导入
+                    </pre>
+                </div>
+            """)
+        
+        if not guide_parts:
+            return ''
+        
         return f"""
         <div class="section">
-            <h2>🔧 环境修复建议</h2>
+            <h2>🔧 环境异常修复指南</h2>
             <div class="fix-guide">
-                <h4>⚠️ Oracle 数据库驱动未安装</h4>
-                <p style="margin-bottom: 15px; color: #856404;">
-                    检测到未安装 Oracle 数据库驱动，以下是安装指南：
-                </p>
-                <pre>{help_text}</pre>
+                {''.join(guide_parts)}
             </div>
         </div>
         """
