@@ -16,7 +16,8 @@ DEFAULT_CONFIG = {
         "port": 1521,
         "service_name": "ORCL",
         "user": "his_user",
-        "pwd": "his_password"
+        "pwd": "his_password",
+        "instant_client_dir": ""
     },
     "api_list": [
         {
@@ -24,25 +25,60 @@ DEFAULT_CONFIG = {
             "expected_code": 200,
             "name": "健康检查接口",
             "method": "GET",
-            "timeout": 10
+            "timeout": 10,
+            "max_retries": 3,
+            "verify_ssl": false
         }
     ],
     "log_rules": {
         "log_dirs": ["D:\\logs"],
-        "keywords": ["ORA-", "ERROR", "Exception", "Timeout", "Failed"],
-        "context_lines": 10
+        "keywords": ["ORA-", "ERROR", "Exception", "Timeout", "Failed", "连接失败"],
+        "context_lines": 10,
+        "log_encoding": "GBK",
+        "tail_lines": 50
     },
     "env_check": {
         "disk_threshold": 80,
-        "ntp_servers": ["ntp.aliyun.com", "time.windows.com"],
+        "ntp_servers": ["ntp.aliyun.com", "time.windows.com", "pool.ntp.org"],
         "time_tolerance_seconds": 300,
-        "system_variables": []
+        "system_variables": [
+            {
+                "name": "身份证号校验控制",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "1=启用身份证校验, 0=禁用"
+            },
+            {
+                "name": "拼音码转换控制",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "1=启用拼音码自动转换"
+            },
+            {
+                "name": "默认体检单位",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "",
+                "description": "系统默认体检单位代码"
+            }
+        ]
     },
     "diagnostic_rules": {
         "ORA-01017": "数据库用户名或密码错误，请检查 db_config 配置。",
         "ORA-12541": "监听程序未启动，请检查数据库服务器 TNS 状态和监听器服务。",
-        "ConnectTimeout": "网络连接超时，请检查防火墙端口是否开放。",
-        "Permission denied": "文件读写权限不足，请尝试以管理员身份运行。"
+        "ORA-12170": "连接超时，请检查防火墙端口 1521 是否开放，网络是否通畅。",
+        "ORA-12514": "监听程序无法解析 SERVICE_NAME，请检查 service_name 配置。",
+        "ORA-03135": "连接失去联系，可能是网络中断或数据库服务重启。",
+        "ORA-28001": "密码已过期，请使用 ALTER USER 语句修改密码。",
+        "ConnectTimeout": "网络连接超时，请检查防火墙端口是否开放，网络是否通畅。",
+        "Connection refused": "连接被拒绝，请检查目标服务是否启动，端口是否正确。",
+        "Permission denied": "文件读写权限不足，请尝试以管理员身份运行或修改目录权限。",
+        "Timeout": "操作超时，请检查网络连接和服务状态。"
     }
 }
 
