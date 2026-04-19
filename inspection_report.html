@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HIS 实施辅助工具 - 巡检报告</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .header .status-badge {
+            display: inline-block;
+            padding: 8px 24px;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: bold;
+            background: #dc3545;
+            color: white;
+        }
+        .header .meta {
+            margin-top: 15px;
+            opacity: 0.8;
+            font-size: 14px;
+        }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+        .summary-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .summary-card:hover { transform: translateY(-5px); }
+        .summary-card .number {
+            font-size: 36px;
+            font-weight: bold;
+        }
+        .summary-card .label {
+            font-size: 14px;
+            color: #6c757d;
+            margin-top: 8px;
+        }
+        .section {
+            padding: 30px;
+            border-bottom: 1px solid #eee;
+        }
+        .section:last-child { border-bottom: none; }
+        .section h2 {
+            font-size: 20px;
+            color: #1a1a2e;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+            display: inline-block;
+        }
+        .result-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 4px solid;
+        }
+        .result-card.ok { border-left-color: #28a745; }
+        .result-card.warning { border-left-color: #ffc107; }
+        .result-card.error { border-left-color: #dc3545; }
+        .result-card.skipped { border-left-color: #6c757d; }
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .result-name {
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .result-status {
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+        }
+        .result-status.ok { background: #28a745; }
+        .result-status.warning { background: #ffc107; }
+        .result-status.error { background: #dc3545; }
+        .result-status.skipped { background: #6c757d; }
+        .result-message {
+            color: #495057;
+            font-size: 14px;
+        }
+        .details-toggle {
+            cursor: pointer;
+            color: #667eea;
+            font-size: 12px;
+            margin-top: 8px;
+            user-select: none;
+        }
+        .details-content {
+            display: none;
+            margin-top: 12px;
+            padding: 12px;
+            background: white;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .details-content.show { display: block; }
+        .log-finding {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .log-finding-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .log-finding .keyword {
+            background: #dc3545;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .log-context {
+            background: #1a1a2e;
+            color: #e0e0e0;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+        }
+        .log-context .highlight {
+            background: #dc3545;
+            color: white;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        .suggestion {
+            background: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 10px;
+            border-left: 4px solid #28a745;
+        }
+        .suggestion-title {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+            font-size: 12px;
+            background: #f8f9fa;
+        }
+        .api-list { margin-top: 10px; }
+        .api-item {
+            padding: 10px 15px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .api-name { font-weight: bold; }
+        .api-url {
+            color: #6c757d;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .disk-list { margin-top: 10px; }
+        .disk-item {
+            padding: 12px 15px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+        .disk-path { font-weight: bold; }
+        .disk-bar {
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .disk-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        .disk-info {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 4px;
+            font-size: 12px;
+            color: #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏥 HIS 实施辅助工具 - 巡检报告</h1>
+            <div class="status-badge">异常</div>
+            <div class="meta">
+                生成时间: 2026-04-19 19:39:49 |
+                配置文件: config.json
+            </div>
+        </div>
+        
+        <div class="summary">
+            
+            <div class="summary-card">
+                <div class="number" style="color: #28a745;">2/3</div>
+                <div class="label">环境检查 (正常/总)</div>
+            </div>
+            <div class="summary-card">
+                <div class="number" style="color: #667eea;">0/0</div>
+                <div class="label">数据库检查 (正常/总)</div>
+            </div>
+            <div class="summary-card">
+                <div class="number" style="color: #17a2b8;">0/2</div>
+                <div class="label">接口巡检 (正常/总)</div>
+            </div>
+            <div class="summary-card">
+                <div class="number" style="color: #28a745;">0</div>
+                <div class="label">日志异常数</div>
+            </div>
+        
+        </div>
+        
+        
+        <div class="section">
+            <h2>🌍 环境检查</h2>
+            
+                    <div class="result-card ok">
+                        <div class="result-header">
+                            <span class="result-name">磁盘空间检查</span>
+                            <span class="result-status ok">正常</span>
+                        </div>
+                        <div class="result-message">已检查 2 个磁盘</div>
+                        <div class="disk-list">
+                        <div class="disk-item">
+                            <div class="disk-path">C:\</div>
+                            <div class="disk-bar">
+                                <div class="disk-bar-fill" style="width: 50.48%; background: #28a745;"></div>
+                            </div>
+                            <div class="disk-info">
+                                <span>已用: 176.25 GB</span>
+                                <span>剩余: 172.88 GB</span>
+                                <span style="color: #28a745;">50.48%</span>
+                            </div>
+                        </div>
+                    
+                        <div class="disk-item">
+                            <div class="disk-path">D:\</div>
+                            <div class="disk-bar">
+                                <div class="disk-bar-fill" style="width: 62.6%; background: #28a745;"></div>
+                            </div>
+                            <div class="disk-info">
+                                <span>已用: 363.77 GB</span>
+                                <span>剩余: 217.32 GB</span>
+                                <span style="color: #28a745;">62.6%</span>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+                
+            
+                    <div class="result-card ok">
+                        <div class="result-header">
+                            <span class="result-name">时间同步检查</span>
+                            <span class="result-status ok">正常</span>
+                        </div>
+                        <div class="result-message">时间同步正常</div>
+                        
+            <div class="details-toggle">查看详情 ▼</div>
+            <div class="details-content">{
+  "local_time": "2026-04-19 19:39:49",
+  "status": "ok",
+  "ntp_time": "2026-04-19 19:39:49",
+  "time_diff_seconds": 0.58,
+  "message": "时间同步正常"
+}</div>
+        
+                    </div>
+                
+                    <div class="result-card warning">
+                        <div class="result-header">
+                            <span class="result-name">系统变量检查</span>
+                            <span class="result-status warning">警告</span>
+                        </div>
+                        <div class="result-message">已检查 1 个系统变量</div>
+                        
+            <div class="details-toggle">查看详情 ▼</div>
+            <div class="details-content">{
+  "variables": [
+    {
+      "name": "JMPDF导出地址",
+      "table": "tj_xtsz_xtbl",
+      "status": "skipped",
+      "actual_value": null,
+      "expected_value": "",
+      "message": "未安装 cx_Oracle 库，无法检查数据库变量"
+    }
+  ]
+}</div>
+        
+                    </div>
+                
+        </div>
+        
+        
+        <div class="section">
+            <h2>🗄️ 数据库检查</h2>
+            
+                <div class="result-card skipped">
+                    <div class="result-header">
+                        <span class="result-name">数据库连接检查</span>
+                        <span class="result-status skipped">跳过</span>
+                    </div>
+                    <div class="result-message">未安装 cx_Oracle 库，无法检查数据库</div>
+                    
+            <div class="details-toggle">查看详情 ▼</div>
+            <div class="details-content">{
+  "ip": "192.168.1.100",
+  "port": 1521,
+  "service_name": "ORCL",
+  "user": "his_user",
+  "start_time": "2026-04-19 19:39:49"
+}</div>
+        
+                </div>
+            
+                <div class="result-card skipped">
+                    <div class="result-header">
+                        <span class="result-name">数据库时间差检查</span>
+                        <span class="result-status skipped">跳过</span>
+                    </div>
+                    <div class="result-message">未安装 cx_Oracle 库，无法检查数据库</div>
+                    
+            <div class="details-toggle">查看详情 ▼</div>
+            <div class="details-content">{
+  "start_time": "2026-04-19 19:39:49"
+}</div>
+        
+                </div>
+            
+        </div>
+        
+        
+        <div class="section">
+            <h2>🌐 接口巡检</h2>
+            <div class="result-card error">
+                <div class="result-header">
+                    <span class="result-name">接口巡检</span>
+                    <span class="result-status error">异常</span>
+                </div>
+                <div class="result-message">已巡检 2 个接口</div>
+                <div class="api-list">
+                <div class="api-item">
+                    <div>
+                        <div class="api-name">健康检查接口</div>
+                        <div class="api-url">http://192.168.1.100:8080/his/api/health</div>
+                    </div>
+                    <span class="result-status error">异常</span>
+                </div>
+            
+                <div class="api-item">
+                    <div>
+                        <div class="api-name">登录接口</div>
+                        <div class="api-url">http://192.168.1.100:8080/his/api/login</div>
+                    </div>
+                    <span class="result-status error">异常</span>
+                </div>
+            </div>
+            </div>
+        </div>
+        
+        
+        <div class="section">
+            <h2>📝 日志诊断</h2>
+            <div class="result-card skipped">
+                <div class="result-header">
+                    <span class="result-name">日志扫描结果</span>
+                    <span class="result-status skipped">跳过</span>
+                </div>
+                <div class="result-message">
+                    扫描文件: 0 / 0 |
+                    发现异常: 0
+                </div>
+                <div class="details-toggle">触发原因 ▼</div>
+                <div class="details-content">
+触发类型: api_failure
+触发原因: 接口巡检发现异常
+触发时间: 2026-04-19 19:39:59
+                </div>
+            </div>
+            
+        </div>
+        
+        
+        <div class="footer">
+            HIS 实施辅助工具套件 v1.0 | 报告生成于 2026-04-19 19:39:49
+        </div>
+    </div>
+    
+    <script>
+        document.querySelectorAll('.details-toggle').forEach(toggle => {
+            toggle.addEventListener('click', function() {
+                const content = this.nextElementSibling;
+                content.classList.toggle('show');
+                this.textContent = content.classList.contains('show') ? '收起详情 ▲' : '查看详情 ▼';
+            });
+        });
+    </script>
+</body>
+</html>
