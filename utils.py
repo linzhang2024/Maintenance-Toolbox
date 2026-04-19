@@ -67,6 +67,22 @@ DEFAULT_CONFIG = {
                 "description": "1=取计算值（需要年龄修正表基础数据）, 0=取录入值"
             },
             {
+                "name": "强制总检开关",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "1=启用强制总检, 0=禁用。开启后将检查未完成项目控制类型是否配置"
+            },
+            {
+                "name": "总检未完成项目控制类型",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "",
+                "description": "1=警告, 2=禁止。强制总检开启时需配置此项"
+            },
+            {
                 "name": "默认体检单位",
                 "table": "tj_xtsz_xtbl",
                 "key_column": "xtmc",

@@ -260,18 +260,30 @@ class EnvironmentScanner:
         
         hearing_age_correction_var = None
         pinyin_control_var = None
+        final_inspect_var = None
+        final_inspect_control_var = None
         
         for var in system_vars_details:
             if '电测听小结展示方式' in var.get('name', ''):
                 hearing_age_correction_var = var
             if '拼音码转换控制' in var.get('name', ''):
                 pinyin_control_var = var
+            if '强制总检开关' in var.get('name', ''):
+                final_inspect_var = var
+            if '总检未完成项目控制类型' in var.get('name', ''):
+                final_inspect_control_var = var
         
         if hearing_age_correction_var and hearing_age_correction_var.get('actual_value') == '1':
             results['hearing_age_correction'] = self.check_hearing_age_correction()
         
         if pinyin_control_var and pinyin_control_var.get('actual_value') == '1':
             results['pinyin_code_check'] = self.check_pinyin_code_empty()
+        
+        if final_inspect_var and final_inspect_var.get('actual_value') == '1':
+            results['final_inspect_config'] = self.check_final_inspect_config(
+                final_inspect_var,
+                final_inspect_control_var
+            )
         
         return results
     
@@ -337,6 +349,58 @@ class EnvironmentScanner:
             timestamp=format_timestamp(),
             error=check_result.get('error'),
             suggestion=check_result.get('suggestion')
+        )
+    
+    def check_final_inspect_config(
+        self,
+        final_inspect_var: Dict[str, Any],
+        final_inspect_control_var: Dict[str, Any] = None
+    ) -> CheckResult:
+        control_value = None
+        control_found = False
+        
+        if final_inspect_control_var:
+            control_value = final_inspect_control_var.get('actual_value')
+            control_found = final_inspect_control_var.get('found', False)
+        
+        if not control_found or control_value in [None, '', '0']:
+            control_type_text = '未配置'
+            if control_value == '0':
+                control_type_text = '已禁用(0)'
+            elif control_value == '':
+                control_type_text = '空值'
+            
+            return CheckResult(
+                name='总检流程配置检查',
+                status=Status.WARNING,
+                message='流程风险：强制总检已开启，但未完成项目控制类型未正确配置',
+                details={
+                    'force_final_inspect': final_inspect_var.get('actual_value', '1'),
+                    'control_type_found': control_found,
+                    'control_type_value': control_value,
+                    'trigger_reason': '强制总检开关=1，自动检查未完成项目控制类型配置',
+                    'risk_description': '未完成项目控制类型应配置为 1(警告) 或 2(禁止)'
+                },
+                timestamp=format_timestamp(),
+                suggestion='请在 tj_xtsz_xtbl 表中配置"总检未完成项目控制类型"为 1(警告) 或 2(禁止)'
+            )
+        
+        control_type_desc = {
+            '1': '警告模式 - 未完成项目时仅提示警告',
+            '2': '禁止模式 - 未完成项目时禁止总检'
+        }
+        
+        return CheckResult(
+            name='总检流程配置检查',
+            status=Status.OK,
+            message=f'总检流程配置正确：{control_type_desc.get(control_value, f"模式{control_value}")}',
+            details={
+                'force_final_inspect': final_inspect_var.get('actual_value', '1'),
+                'control_type_value': control_value,
+                'control_type_description': control_type_desc.get(control_value, '未知模式'),
+                'trigger_reason': '强制总检开关=1，自动检查未完成项目控制类型配置'
+            },
+            timestamp=format_timestamp()
         )
     
     def check_disk_space(self) -> CheckResult:
