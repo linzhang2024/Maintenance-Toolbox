@@ -10,6 +10,8 @@ import platform
 import socket
 import re
 import time
+import subprocess
+import struct
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Tuple
@@ -20,6 +22,145 @@ import requests
 
 from utils import DiskChecker, TimeChecker, Status, format_timestamp
 from db_handler import DatabaseConnection, get_driver_info
+
+
+class NetworkDiagnostic:
+    @staticmethod
+    def ping(host: str, count: int = 2, timeout: float = 2.0) -> Dict[str, Any]:
+        result = {
+            'host': host,
+            'success': False,
+            'packet_loss': 100.0,
+            'avg_rtt_ms': None,
+            'min_rtt_ms': None,
+            'max_rtt_ms': None,
+            'rtts': [],
+            'error': None
+        }
+        
+        system = platform.system().lower()
+        
+        try:
+            if system == 'windows':
+                cmd = ['ping', '-n', str(count), '-w', str(int(timeout * 1000)), host]
+            else:
+                cmd = ['ping', '-c', str(count), '-W', str(timeout), host]
+            
+            startupinfo = None
+            if system == 'windows':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+                text=True
+            )
+            
+            try:
+                stdout, stderr = process.communicate(timeout=(timeout + 1) * count)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                result['error'] = 'Ping 命令执行超时'
+                return result
+            
+            rtts = []
+            success_count = 0
+            
+            ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', host)
+            if not ip_match:
+                ip_match = re.search(r'\[(\d+\.\d+\.\d+\.\d+)\]', stdout)
+                if ip_match:
+                    result['resolved_ip'] = ip_match.group(1)
+            
+            if system == 'windows':
+                time_pattern = r'(?:时间|time)[=<](\d+)ms'
+                for match in re.finditer(time_pattern, stdout, re.IGNORECASE):
+                    rtts.append(float(match.group(1)))
+                    success_count += 1
+                
+                loss_match = re.search(r'(\d+)% (?:丢失|loss)', stdout, re.IGNORECASE)
+                if loss_match:
+                    result['packet_loss'] = float(loss_match.group(1))
+            else:
+                time_pattern = r'time[=<](\d+(?:\.\d+)?) ?ms'
+                for match in re.finditer(time_pattern, stdout, re.IGNORECASE):
+                    rtts.append(float(match.group(1)))
+                    success_count += 1
+                
+                loss_match = re.search(r'(\d+(?:\.\d+)?)% packet loss', stdout, re.IGNORECASE)
+                if loss_match:
+                    result['packet_loss'] = float(loss_match.group(1))
+            
+            result['rtts'] = rtts
+            if rtts:
+                result['avg_rtt_ms'] = round(sum(rtts) / len(rtts), 2)
+                result['min_rtt_ms'] = round(min(rtts), 2)
+                result['max_rtt_ms'] = round(max(rtts), 2)
+                result['success'] = success_count > 0
+            
+            if success_count > 0 and result['packet_loss'] < 100:
+                result['success'] = True
+            
+        except Exception as e:
+            result['error'] = str(e)
+        
+        return result
+    
+    @staticmethod
+    def get_diagnostic_suggestion(
+        ping_result: Dict[str, Any],
+        port_scan_result: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        result = {
+            'network_status': 'unknown',
+            'suggestions': []
+        }
+        
+        if not ping_result.get('success', False):
+            if ping_result.get('packet_loss', 100) >= 100:
+                result['network_status'] = 'unreachable'
+                result['suggestions'] = [
+                    '目标主机无法 Ping 通',
+                    '建议检查：网络策略、防火墙规则、路由配置',
+                    '可能原因：IP 地址错误、服务器离线、网络中断'
+                ]
+            else:
+                result['network_status'] = 'unstable'
+                result['suggestions'] = [
+                    f'网络不稳定，丢包率: {ping_result.get("packet_loss", 0)}%',
+                    '建议检查：网络质量、带宽占用'
+                ]
+        else:
+            if port_scan_result:
+                ports = port_scan_result.get('ports', {})
+                any_open = any(p.get('open', False) for p in ports.values())
+                
+                if any_open:
+                    result['network_status'] = 'network_ok_service_down'
+                    result['suggestions'] = [
+                        '✅ 网络连接正常（Ping 通）',
+                        '⚠️ 部分应用端口未开放',
+                        '建议检查：中间件（Tomcat/IIS）状态、应用服务是否启动'
+                    ]
+                else:
+                    result['network_status'] = 'network_ok_all_ports_closed'
+                    result['suggestions'] = [
+                        '✅ 网络连接正常（Ping 通）',
+                        '⚠️ 所有检测端口均未开放',
+                        '建议检查：防火墙端口、服务是否启动'
+                    ]
+            else:
+                result['network_status'] = 'network_ok'
+                result['suggestions'] = [
+                    '✅ 网络连接正常（Ping 通）',
+                    '如接口仍有问题，建议检查应用层配置'
+                ]
+        
+        return result
 
 
 @dataclass
@@ -115,7 +256,88 @@ class EnvironmentScanner:
         results['time_sync'] = self.check_time_sync()
         results['system_vars'] = self.check_system_variables()
         
+        system_vars_details = results['system_vars'].details.get('variables', [])
+        
+        hearing_age_correction_var = None
+        pinyin_control_var = None
+        
+        for var in system_vars_details:
+            if '电测听小结展示方式' in var.get('name', ''):
+                hearing_age_correction_var = var
+            if '拼音码转换控制' in var.get('name', ''):
+                pinyin_control_var = var
+        
+        if hearing_age_correction_var and hearing_age_correction_var.get('actual_value') == '1':
+            results['hearing_age_correction'] = self.check_hearing_age_correction()
+        
+        if pinyin_control_var and pinyin_control_var.get('actual_value') == '1':
+            results['pinyin_code_check'] = self.check_pinyin_code_empty()
+        
         return results
+    
+    def check_hearing_age_correction(self) -> CheckResult:
+        driver_info = get_driver_info()
+        
+        if not driver_info['available']:
+            return CheckResult(
+                name='年龄修正表基础数据检查',
+                status=Status.SKIPPED,
+                message='未安装 Oracle 数据库驱动，跳过检查',
+                details={'driver_info': driver_info},
+                timestamp=format_timestamp()
+            )
+        
+        db_conn = DatabaseConnection(self.db_config)
+        check_result = db_conn.check_hearing_age_correction()
+        
+        status = check_result.get('status', Status.ERROR)
+        message = check_result.get('message', '')
+        
+        return CheckResult(
+            name='年龄修正表基础数据检查',
+            status=status,
+            message=message,
+            details={
+                'table': check_result.get('table'),
+                'record_count': check_result.get('record_count'),
+                'trigger_reason': '电测听小结展示方式=1，自动检查年龄修正表'
+            },
+            timestamp=format_timestamp(),
+            error=check_result.get('error'),
+            suggestion=check_result.get('suggestion')
+        )
+    
+    def check_pinyin_code_empty(self) -> CheckResult:
+        driver_info = get_driver_info()
+        
+        if not driver_info['available']:
+            return CheckResult(
+                name='拼音码空值检查',
+                status=Status.SKIPPED,
+                message='未安装 Oracle 数据库驱动，跳过检查',
+                details={'driver_info': driver_info},
+                timestamp=format_timestamp()
+            )
+        
+        db_conn = DatabaseConnection(self.db_config)
+        check_result = db_conn.check_pinyin_code_empty()
+        
+        status = check_result.get('status', Status.ERROR)
+        message = check_result.get('message', '')
+        
+        return CheckResult(
+            name='拼音码空值检查',
+            status=status,
+            message=message,
+            details={
+                'tables_checked': check_result.get('tables_checked', []),
+                'empty_count': check_result.get('empty_count', 0),
+                'trigger_reason': '拼音码转换控制=1，自动检查常用项目拼音码'
+            },
+            timestamp=format_timestamp(),
+            error=check_result.get('error'),
+            suggestion=check_result.get('suggestion')
+        )
     
     def check_disk_space(self) -> CheckResult:
         threshold = self.env_config.get('disk_threshold', 80)
@@ -369,6 +591,11 @@ class ApiChecker:
                 host = PortProbe.extract_host_from_url(url)
                 if host:
                     details['port_scan'] = PortProbe.probe_host(host)
+                    details['ping_result'] = NetworkDiagnostic.ping(host)
+                    details['network_diagnostic'] = NetworkDiagnostic.get_diagnostic_suggestion(
+                        details['ping_result'],
+                        details['port_scan']
+                    )
                 
             except requests.exceptions.SSLError as e:
                 last_error = f'SSL 证书验证失败'
@@ -382,6 +609,11 @@ class ApiChecker:
                 host = PortProbe.extract_host_from_url(url)
                 if host:
                     details['port_scan'] = PortProbe.probe_host(host)
+                    details['ping_result'] = NetworkDiagnostic.ping(host)
+                    details['network_diagnostic'] = NetworkDiagnostic.get_diagnostic_suggestion(
+                        details['ping_result'],
+                        details['port_scan']
+                    )
                 
             except Exception as e:
                 last_error = f'请求异常: {str(e)[:100]}'

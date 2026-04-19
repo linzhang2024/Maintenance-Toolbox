@@ -70,7 +70,15 @@
         "key_column": "xtmc",
         "value_column": "xtsz",
         "expected_value": "1",
-        "description": "1=启用拼音码自动转换"
+        "description": "1=启用拼音码自动转换，开启后将自动检查常用项目拼音码空值"
+      },
+      {
+        "name": "电测听小结展示方式",
+        "table": "tj_xtsz_xtbl",
+        "key_column": "xtmc",
+        "value_column": "xtsz",
+        "expected_value": "1",
+        "description": "1=取计算值（需要年龄修正表基础数据）, 0=取录入值"
       },
       {
         "name": "默认体检单位",
