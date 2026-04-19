@@ -6,13 +6,14 @@ HIS 实施辅助工具套件 - 主程序入口
 
 import os
 import sys
+import json
 import argparse
-from datetime import datetime
 from typing import Dict, Any, List
 
 from utils import ConfigManager, Status, get_status_color, get_status_text, format_timestamp
-from checker import EnvironmentScanner, ApiChecker, DatabaseChecker, CheckResult
+from checker import EnvironmentScanner, ApiChecker, DatabaseChecker, CheckResult, PortProbe
 from logger import LogAnalyzer
+from db_handler import get_driver_info, DATABASE_HELP_TEXT
 
 
 class HISHelperTool:
@@ -23,12 +24,20 @@ class HISHelperTool:
         self.results = {}
         self.log_analyzer = None
         self.html_report = None
+        self.driver_info = get_driver_info()
     
     def initialize(self) -> bool:
         print(f"{'='*60}")
-        print(f"      HIS 实施辅助工具套件 v1.0")
+        print(f"      HIS 实施辅助工具套件 v1.1")
         print(f"{'='*60}")
         print(f"[{format_timestamp()}] 初始化...")
+        
+        print(f"[{format_timestamp()}] Oracle 驱动: {'可用' if self.driver_info['available'] else '未安装'}", end='')
+        if self.driver_info['driver_name']:
+            print(f" ({self.driver_info['driver_name']})")
+        else:
+            print("")
+            print(f"  💡 提示: 请安装 oracledb 或 cx_Oracle 以启用数据库检查")
         
         if not os.path.exists(self.config_path):
             print(f"[{format_timestamp()}] 配置文件不存在，正在创建默认配置...")
@@ -56,7 +65,8 @@ class HISHelperTool:
             'environment': {},
             'database': {},
             'api': {},
-            'log': {}
+            'log': {},
+            'driver_info': self.driver_info
         }
         
         self._check_environment()
@@ -89,6 +99,29 @@ class HISHelperTool:
     def _check_database(self):
         print(f"\n[{format_timestamp()}] [数据库检查] 开始...")
         
+        if not self.driver_info['available']:
+            print(f"  ⚠️  未安装 Oracle 驱动，跳过数据库检查")
+            print(f"  💡 请查看报告中的 '环境修复建议' 板块了解安装方法")
+            
+            self.results['database'] = {
+                'connection': {
+                    'name': '数据库连接检查',
+                    'status': Status.SKIPPED,
+                    'message': '未安装 Oracle 数据库驱动',
+                    'details': {'driver_info': self.driver_info},
+                    'timestamp': format_timestamp()
+                },
+                'time_diff': {
+                    'name': '数据库时间差检查',
+                    'status': Status.SKIPPED,
+                    'message': '未安装 Oracle 数据库驱动',
+                    'details': {'driver_info': self.driver_info},
+                    'timestamp': format_timestamp()
+                }
+            }
+            print(f"[{format_timestamp()}] [数据库检查] 完成 (已跳过)")
+            return
+        
         db_checker = DatabaseChecker(self.config)
         
         conn_result = db_checker.check_connection()
@@ -103,6 +136,8 @@ class HISHelperTool:
             status_color = self._get_status_console_color(result.status)
             status_text = get_status_text(result.status)
             print(f"  {status_color}[{status_text}] {result.name}: {result.message}")
+            if result.suggestion:
+                print(f"     💡 建议: {result.suggestion}")
         
         print(f"[{format_timestamp()}] [数据库检查] 完成")
     
@@ -128,6 +163,14 @@ class HISHelperTool:
                     status_color = self._get_status_console_color(result.status)
                     status_text = get_status_text(result.status)
                     print(f"    {status_color}[{status_text}] {name}: {result.message}")
+                    
+                    details = result.details
+                    if details.get('port_scan'):
+                        port_scan = details['port_scan']
+                        print(f"       📡 端口探测 ({port_scan['host']}):")
+                        for port_str, port_info in port_scan['ports'].items():
+                            port_status = "✅ 开放" if port_info['open'] else "❌ 关闭/过滤"
+                            print(f"         端口 {port_str}: {port_status}")
         
         print(f"[{format_timestamp()}] [接口巡检] 完成")
     
@@ -162,13 +205,22 @@ class HISHelperTool:
             
             scan_result = log_result.get('scan_result', {})
             findings_count = scan_result.get('findings_count', 0)
+            keyword_freq = scan_result.get('keyword_frequency', [])
+            uncategorized = scan_result.get('uncategorized_tails', [])
             
             if findings_count > 0:
                 print(f"[{format_timestamp()}] [日志诊断] 发现 {findings_count} 个异常")
+                if keyword_freq:
+                    print(f"  📊 关键词频率统计:")
+                    for item in keyword_freq[:5]:
+                        print(f"     {item['keyword']}: {item['count']} 次")
+                
                 for finding in scan_result.get('findings', []):
                     print(f"  - {finding['file_name']}:{finding['line_number']} - {finding['matched_keyword']}")
                     if finding.get('suggestion'):
-                        print(f"    建议: {finding['suggestion']}")
+                        print(f"    💡 建议: {finding['suggestion']}")
+            elif uncategorized:
+                print(f"[{format_timestamp()}] [日志诊断] 未发现匹配异常，已提取 {len(uncategorized)} 个最新日志文件的末尾内容")
             else:
                 print(f"[{format_timestamp()}] [日志诊断] 未发现异常")
         else:
@@ -280,6 +332,13 @@ class HISHelperTool:
             border-bottom: 3px solid #667eea;
             display: inline-block;
         }}
+        .section h3 {{
+            font-size: 16px;
+            color: #495057;
+            margin: 20px 0 15px 0;
+            padding-left: 10px;
+            border-left: 3px solid #ffc107;
+        }}
         .result-card {{
             background: #f8f9fa;
             border-radius: 8px;
@@ -333,6 +392,8 @@ class HISHelperTool:
             font-size: 13px;
             white-space: pre-wrap;
             word-break: break-all;
+            max-height: 400px;
+            overflow-y: auto;
         }}
         .details-content.show {{ display: block; }}
         .log-finding {{
@@ -433,6 +494,103 @@ class HISHelperTool:
             font-size: 12px;
             color: #6c757d;
         }}
+        .fix-guide {{
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }}
+        .fix-guide h4 {{
+            color: #856404;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ffeaa7;
+        }}
+        .fix-guide pre {{
+            background: #1a1a2e;
+            color: #e0e0e0;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+            white-space: pre-wrap;
+        }}
+        .fix-guide ol {{
+            margin-left: 20px;
+            color: #856404;
+        }}
+        .fix-guide ol li {{
+            margin-bottom: 10px;
+            line-height: 1.6;
+        }}
+        .freq-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            background: white;
+            border-radius: 6px;
+            overflow: hidden;
+        }}
+        .freq-table th, .freq-table td {{
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }}
+        .freq-table th {{
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+        }}
+        .freq-table tr:hover {{ background: #f8f9fa; }}
+        .freq-badge {{
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            background: #dc3545;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+        }}
+        .port-scan {{
+            margin-top: 10px;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+        }}
+        .port-item {{
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }}
+        .port-item:last-child {{ border-bottom: none; }}
+        .port-open {{ color: #28a745; font-weight: bold; }}
+        .port-closed {{ color: #dc3545; font-weight: bold; }}
+        .uncategorized-box {{
+            background: #f8f9fa;
+            border: 1px dashed #6c757d;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }}
+        .uncategorized-header {{
+            color: #6c757d;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }}
+        .uncategorized-content {{
+            background: #1a1a2e;
+            color: #e0e0e0;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 11px;
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre;
+        }}
     </style>
 </head>
 <body>
@@ -454,9 +612,10 @@ class HISHelperTool:
         {self._build_database_section()}
         {self._build_api_section()}
         {self._build_log_section()}
+        {self._build_fix_guide_section()}
         
         <div class="footer">
-            HIS 实施辅助工具套件 v1.0 | 报告生成于 {self.results.get('run_time', '未知')}
+            HIS 实施辅助工具套件 v1.1 | 报告生成于 {self.results.get('run_time', '未知')}
         </div>
     </div>
     
@@ -506,6 +665,12 @@ class HISHelperTool:
         if scan_result:
             log_findings = scan_result.get('findings_count', 0)
         
+        driver_available = self.driver_info.get('available', False)
+        driver_status = "✅ 已安装" if driver_available else "❌ 未安装"
+        driver_name = self.driver_info.get('driver_name', '')
+        if driver_name:
+            driver_status += f" ({driver_name})"
+        
         cards = f"""
             <div class="summary-card">
                 <div class="number" style="color: #28a745;">{env_ok}/{env_total}</div>
@@ -522,6 +687,10 @@ class HISHelperTool:
             <div class="summary-card">
                 <div class="number" style="color: {'#dc3545' if log_findings > 0 else '#28a745'};">{log_findings}</div>
                 <div class="label">日志异常数</div>
+            </div>
+            <div class="summary-card">
+                <div class="number" style="font-size: 14px; line-height: 1.4;">{driver_status}</div>
+                <div class="label">Oracle 驱动</div>
             </div>
         """
         return cards
@@ -593,6 +762,17 @@ class HISHelperTool:
         items_html = ''
         for name, result in db_results.items():
             status_class = result['status']
+            suggestion = result.get('details', {}).get('suggestion', '') or result.get('suggestion', '')
+            
+            suggestion_html = ''
+            if suggestion:
+                suggestion_html = f"""
+                    <div class="suggestion">
+                        <div class="suggestion-title">💡 实施建议</div>
+                        <div>{suggestion}</div>
+                    </div>
+                """
+            
             items_html += f"""
                 <div class="result-card {status_class}">
                     <div class="result-header">
@@ -600,6 +780,7 @@ class HISHelperTool:
                         <span class="result-status {status_class}">{get_status_text(result['status'])}</span>
                     </div>
                     <div class="result-message">{result['message']}</div>
+                    {suggestion_html}
                     {self._build_details_html(result)}
                 </div>
             """
@@ -628,11 +809,35 @@ class HISHelperTool:
                 continue
             api_status = result['status']
             details = result.get('details', {})
+            
+            port_scan_html = ''
+            if details.get('port_scan'):
+                port_scan = details['port_scan']
+                port_items = ''
+                for port_str, port_info in port_scan['ports'].items():
+                    port_status = 'port-open' if port_info['open'] else 'port-closed'
+                    port_text = '✅ 开放' if port_info['open'] else '❌ 关闭/过滤'
+                    port_items += f"""
+                        <div class="port-item">
+                            <span>端口 {port_str}</span>
+                            <span class="{port_status}">{port_text}</span>
+                        </div>
+                    """
+                port_scan_html = f"""
+                    <div class="port-scan">
+                        <div style="font-weight: bold; margin-bottom: 8px; color: #667eea;">
+                            📡 端口探测 ({port_scan['host']})
+                        </div>
+                        {port_items}
+                    </div>
+                """
+            
             api_list_html += f"""
                 <div class="api-item">
                     <div>
                         <div class="api-name">{name}</div>
                         <div class="api-url">{details.get('url', 'N/A')}</div>
+                        {port_scan_html}
                     </div>
                     <span class="result-status {api_status}">{get_status_text(api_status)}</span>
                 </div>
@@ -672,6 +877,35 @@ class HISHelperTool:
         
         status_class = scan_result.get('status', Status.OK)
         findings = scan_result.get('findings', [])
+        keyword_freq = scan_result.get('keyword_frequency', [])
+        uncategorized = scan_result.get('uncategorized_tails', [])
+        
+        freq_html = ''
+        if keyword_freq:
+            freq_rows = ''
+            for item in keyword_freq:
+                freq_rows += f"""
+                    <tr>
+                        <td>{item['keyword']}</td>
+                        <td><span class="freq-badge">{item['count']}</span></td>
+                        <td>{', '.join(item['files'][:3])}{'...' if len(item['files']) > 3 else ''}</td>
+                    </tr>
+                """
+            freq_html = f"""
+                <h3>📊 关键词频率统计</h3>
+                <table class="freq-table">
+                    <thead>
+                        <tr>
+                            <th>关键词</th>
+                            <th>出现次数</th>
+                            <th>涉及文件</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {freq_rows}
+                    </tbody>
+                </table>
+            """
         
         findings_html = ''
         for finding in findings:
@@ -708,6 +942,20 @@ class HISHelperTool:
                 </div>
             """
         
+        uncategorized_html = ''
+        if uncategorized:
+            uncategorized_html = '<h3>📋 未分类异常（最新日志末尾）</h3>'
+            for tail in uncategorized:
+                lines_content = '\n'.join(tail['lines'])
+                uncategorized_html += f"""
+                    <div class="uncategorized-box">
+                        <div class="uncategorized-header">
+                            📄 {tail['file_name']} (最后 {tail['total_lines']} 行)
+                        </div>
+                        <div class="uncategorized-content">{lines_content}</div>
+                    </div>
+                """
+        
         return f"""
         <div class="section">
             <h2>📝 日志诊断</h2>
@@ -718,7 +966,8 @@ class HISHelperTool:
                 </div>
                 <div class="result-message">
                     扫描文件: {scan_result.get('scanned_files', 0)} / {scan_result.get('total_files', 0)} |
-                    发现异常: {scan_result.get('findings_count', 0)}
+                    发现异常: {scan_result.get('findings_count', 0)} |
+                    编码: {scan_result.get('log_encoding', '自动检测')}
                 </div>
                 <div class="details-toggle">触发原因 ▼</div>
                 <div class="details-content">
@@ -727,7 +976,28 @@ class HISHelperTool:
 触发时间: {log_result.get('trigger_time', 'N/A')}
                 </div>
             </div>
+            {freq_html}
             {findings_html}
+            {uncategorized_html}
+        </div>
+        """
+    
+    def _build_fix_guide_section(self) -> str:
+        if self.driver_info.get('available'):
+            return ''
+        
+        help_text = DATABASE_HELP_TEXT.strip()
+        
+        return f"""
+        <div class="section">
+            <h2>🔧 环境修复建议</h2>
+            <div class="fix-guide">
+                <h4>⚠️ Oracle 数据库驱动未安装</h4>
+                <p style="margin-bottom: 15px; color: #856404;">
+                    检测到未安装 Oracle 数据库驱动，以下是安装指南：
+                </p>
+                <pre>{help_text}</pre>
+            </div>
         </div>
         """
     
@@ -784,7 +1054,8 @@ class HISHelperTool:
             'message': result.message,
             'details': result.details,
             'timestamp': result.timestamp,
-            'error': result.error
+            'error': result.error,
+            'suggestion': result.suggestion
         }
 
 
@@ -796,6 +1067,7 @@ def main():
 示例:
   python main.py                           # 使用默认配置运行所有检查
   python main.py -c my_config.json         # 使用指定配置文件
+  python main.py -o report_2024.html      # 自定义输出报告名称
   python main.py --init-config             # 仅初始化配置文件
         '''
     )

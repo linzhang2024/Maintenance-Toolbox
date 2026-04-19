@@ -8,14 +8,18 @@ Checker Module - HIS 实施辅助工具套件核心检查模块
 import os
 import platform
 import socket
+import re
+import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import requests
 
 from utils import DiskChecker, TimeChecker, Status, format_timestamp
+from db_handler import DatabaseConnection, get_driver_info
 
 
 @dataclass
@@ -26,6 +30,76 @@ class CheckResult:
     details: Dict[str, Any]
     timestamp: str
     error: Optional[str] = None
+    suggestion: Optional[str] = None
+
+
+class PortProbe:
+    COMMON_PORTS = [80, 443, 1521, 8080, 8443, 22, 3389]
+    
+    @staticmethod
+    def probe_port(host: str, port: int, timeout: float = 2.0) -> Dict[str, Any]:
+        result = {
+            'host': host,
+            'port': port,
+            'open': False,
+            'error': None,
+            'response_time_ms': None
+        }
+        
+        try:
+            start_time = time.time()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            
+            sock_result = sock.connect_ex((host, port))
+            elapsed = (time.time() - start_time) * 1000
+            result['response_time_ms'] = round(elapsed, 2)
+            
+            if sock_result == 0:
+                result['open'] = True
+            else:
+                result['error'] = f"连接被拒绝 (errno={sock_result})"
+            
+            sock.close()
+        except socket.timeout:
+            result['error'] = '连接超时'
+        except socket.gaierror:
+            result['error'] = '无法解析主机名'
+        except Exception as e:
+            result['error'] = str(e)
+        
+        return result
+    
+    @staticmethod
+    def probe_host(host: str, ports: Optional[List[int]] = None) -> Dict[str, Any]:
+        if ports is None:
+            ports = PortProbe.COMMON_PORTS
+        
+        result = {
+            'host': host,
+            'scan_time': format_timestamp(),
+            'ports': {}
+        }
+        
+        for port in ports:
+            port_result = PortProbe.probe_port(host, port)
+            result['ports'][str(port)] = port_result
+        
+        return result
+    
+    @staticmethod
+    def extract_host_from_url(url: str) -> Optional[str]:
+        try:
+            parsed = urlparse(url)
+            if parsed.hostname:
+                return parsed.hostname
+            
+            match = re.search(r'://([^:/]+)', url)
+            if match:
+                return match.group(1)
+        except Exception:
+            pass
+        return None
 
 
 class EnvironmentScanner:
@@ -125,13 +199,33 @@ class EnvironmentScanner:
                 timestamp=format_timestamp()
             )
         
+        driver_info = get_driver_info()
+        if not driver_info['available']:
+            return CheckResult(
+                name='系统变量检查',
+                status=Status.SKIPPED,
+                message='未安装 Oracle 数据库驱动，跳过检查',
+                details={'variables': [], 'driver_info': driver_info},
+                timestamp=format_timestamp()
+            )
+        
         results = []
         all_ok = True
         
+        db_conn = DatabaseConnection(self.db_config)
+        
         for var in system_vars:
-            var_result = self._check_single_variable(var)
+            var_result = db_conn.check_system_variable(
+                table=var.get('table', 'tj_xtsz_xtbl'),
+                key_column=var.get('key_column', 'xtmc'),
+                value_column=var.get('value_column', 'xtsz'),
+                var_name=var.get('name', ''),
+                expected_value=var.get('expected_value')
+            )
+            var_result['description'] = var.get('description', '')
             results.append(var_result)
-            if var_result.get('status') != 'ok':
+            
+            if var_result.get('status') not in ['ok', 'skipped']:
                 all_ok = False
         
         status = Status.OK if all_ok else Status.WARNING
@@ -143,70 +237,6 @@ class EnvironmentScanner:
             details={'variables': results},
             timestamp=format_timestamp()
         )
-    
-    def _check_single_variable(self, var_config: Dict[str, Any]) -> Dict[str, Any]:
-        result = {
-            'name': var_config.get('name', '未知变量'),
-            'table': var_config.get('table', ''),
-            'status': 'ok',
-            'actual_value': None,
-            'expected_value': var_config.get('expected_value', ''),
-            'message': ''
-        }
-        
-        if not self.db_config:
-            result['status'] = 'skipped'
-            result['message'] = '未配置数据库连接'
-            return result
-        
-        try:
-            import cx_Oracle
-            dsn = cx_Oracle.makedsn(
-                self.db_config['ip'],
-                self.db_config['port'],
-                service_name=self.db_config['service_name']
-            )
-            connection = cx_Oracle.connect(
-                user=self.db_config['user'],
-                password=self.db_config['pwd'],
-                dsn=dsn
-            )
-            cursor = connection.cursor()
-            
-            table = var_config.get('table', 'tj_xtsz_xtbl')
-            key_column = var_config.get('key_column', 'xtmc')
-            value_column = var_config.get('value_column', 'xtsz')
-            var_name = var_config.get('name', '')
-            
-            query = f"SELECT {value_column} FROM {table} WHERE {key_column} = :1"
-            cursor.execute(query, (var_name,))
-            row = cursor.fetchone()
-            
-            if row:
-                result['actual_value'] = str(row[0]) if row[0] else ''
-            else:
-                result['status'] = 'warning'
-                result['message'] = f'未找到变量: {var_name}'
-                return result
-            
-            cursor.close()
-            connection.close()
-            
-            expected = var_config.get('expected_value', '')
-            if expected and result['actual_value'] != expected:
-                result['status'] = 'warning'
-                result['message'] = f'值不匹配: 期望={expected}, 实际={result["actual_value"]}'
-            else:
-                result['message'] = '检查通过'
-            
-        except ImportError:
-            result['status'] = 'skipped'
-            result['message'] = '未安装 cx_Oracle 库，无法检查数据库变量'
-        except Exception as e:
-            result['status'] = 'error'
-            result['message'] = str(e)
-        
-        return result
 
 
 class ApiChecker:
@@ -275,6 +305,8 @@ class ApiChecker:
         expected_code = api_config.get('expected_code', 200)
         method = api_config.get('method', 'GET').upper()
         timeout = api_config.get('timeout', 10)
+        max_retries = api_config.get('max_retries', 0)
+        verify_ssl = api_config.get('verify_ssl', True)
         api_name = api_config.get('name', url)
         
         details = {
@@ -282,76 +314,92 @@ class ApiChecker:
             'method': method,
             'expected_code': expected_code,
             'start_time': format_timestamp(),
+            'max_retries': max_retries,
+            'verify_ssl': verify_ssl,
             'response_time_ms': None,
             'actual_code': None,
-            'response_body': None
+            'response_body': None,
+            'port_scan': None
         }
         
-        try:
-            import time
-            start_time = time.time()
-            
-            if method == 'GET':
-                response = requests.get(url, timeout=timeout)
-            elif method == 'POST':
-                response = requests.post(url, timeout=timeout)
-            else:
-                response = requests.request(method, url, timeout=timeout)
-            
-            elapsed = (time.time() - start_time) * 1000
-            details['response_time_ms'] = round(elapsed, 2)
-            details['actual_code'] = response.status_code
-            details['end_time'] = format_timestamp()
-            
-            if response.status_code == expected_code:
-                return CheckResult(
-                    name=api_name,
-                    status=Status.OK,
-                    message=f'接口正常，响应时间: {details["response_time_ms"]}ms',
-                    details=details,
-                    timestamp=format_timestamp()
-                )
-            else:
-                try:
-                    details['response_body'] = response.text[:500]
-                except Exception:
-                    pass
-                
-                return CheckResult(
-                    name=api_name,
-                    status=Status.ERROR,
-                    message=f'返回码不匹配: 期望={expected_code}, 实际={response.status_code}',
-                    details=details,
-                    timestamp=format_timestamp()
-                )
+        attempt = 0
+        last_error = None
         
-        except requests.exceptions.Timeout:
-            return CheckResult(
-                name=api_name,
-                status=Status.ERROR,
-                message=f'请求超时 ({timeout}秒)',
-                details=details,
-                timestamp=format_timestamp(),
-                error='Timeout'
-            )
-        except requests.exceptions.ConnectionError as e:
-            return CheckResult(
-                name=api_name,
-                status=Status.ERROR,
-                message='连接失败',
-                details=details,
-                timestamp=format_timestamp(),
-                error=str(e)
-            )
-        except Exception as e:
-            return CheckResult(
-                name=api_name,
-                status=Status.ERROR,
-                message='请求异常',
-                details=details,
-                timestamp=format_timestamp(),
-                error=str(e)
-            )
+        while attempt <= max_retries:
+            try:
+                start_time = time.time()
+                
+                if not verify_ssl:
+                    import urllib3
+                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                
+                if method == 'GET':
+                    response = requests.get(url, timeout=timeout, verify=verify_ssl)
+                elif method == 'POST':
+                    response = requests.post(url, timeout=timeout, verify=verify_ssl)
+                else:
+                    response = requests.request(method, url, timeout=timeout, verify=verify_ssl)
+                
+                elapsed = (time.time() - start_time) * 1000
+                details['response_time_ms'] = round(elapsed, 2)
+                details['actual_code'] = response.status_code
+                details['end_time'] = format_timestamp()
+                details['attempts'] = attempt + 1
+                
+                if response.status_code == expected_code:
+                    return CheckResult(
+                        name=api_name,
+                        status=Status.OK,
+                        message=f'接口正常，响应时间: {details["response_time_ms"]}ms (尝试 {attempt + 1} 次)',
+                        details=details,
+                        timestamp=format_timestamp()
+                    )
+                else:
+                    try:
+                        details['response_body'] = response.text[:500]
+                    except Exception:
+                        pass
+                    
+                    last_error = f'返回码不匹配: 期望={expected_code}, 实际={response.status_code}'
+                    
+            except requests.exceptions.Timeout as e:
+                last_error = f'请求超时 ({timeout}秒)'
+                details['error_type'] = 'Timeout'
+                
+                host = PortProbe.extract_host_from_url(url)
+                if host:
+                    details['port_scan'] = PortProbe.probe_host(host)
+                
+            except requests.exceptions.SSLError as e:
+                last_error = f'SSL 证书验证失败'
+                details['error_type'] = 'SSLError'
+                details['suggestion'] = '可尝试设置 verify_ssl: false 跳过证书验证'
+                
+            except requests.exceptions.ConnectionError as e:
+                last_error = f'连接失败: {str(e)[:100]}'
+                details['error_type'] = 'ConnectionError'
+                
+                host = PortProbe.extract_host_from_url(url)
+                if host:
+                    details['port_scan'] = PortProbe.probe_host(host)
+                
+            except Exception as e:
+                last_error = f'请求异常: {str(e)[:100]}'
+                details['error_type'] = 'Exception'
+            
+            attempt += 1
+            if attempt <= max_retries:
+                time.sleep(1)
+        
+        details['attempts'] = attempt
+        return CheckResult(
+            name=api_name,
+            status=Status.ERROR,
+            message=f'{last_error} (已尝试 {attempt} 次)',
+            details=details,
+            timestamp=format_timestamp(),
+            error=last_error
+        )
 
 
 class DatabaseChecker:
@@ -360,165 +408,56 @@ class DatabaseChecker:
         self.db_config = config.get('database', {})
     
     def check_connection(self) -> CheckResult:
-        if not self.db_config:
+        driver_info = get_driver_info()
+        
+        if not driver_info['available']:
             return CheckResult(
                 name='数据库连接检查',
                 status=Status.SKIPPED,
-                message='未配置数据库连接信息',
-                details={},
+                message='未安装 Oracle 数据库驱动',
+                details={'driver_info': driver_info},
                 timestamp=format_timestamp()
             )
         
-        details = {
-            'ip': self.db_config.get('ip'),
-            'port': self.db_config.get('port'),
-            'service_name': self.db_config.get('service_name'),
-            'user': self.db_config.get('user'),
-            'start_time': format_timestamp()
-        }
+        db_conn = DatabaseConnection(self.db_config)
+        test_result = db_conn.test_connection()
         
-        try:
-            import cx_Oracle
-            import time
-            
-            start_time = time.time()
-            
-            dsn = cx_Oracle.makedsn(
-                self.db_config['ip'],
-                self.db_config['port'],
-                service_name=self.db_config['service_name']
-            )
-            
-            connection = cx_Oracle.connect(
-                user=self.db_config['user'],
-                password=self.db_config['pwd'],
-                dsn=dsn
-            )
-            
-            cursor = connection.cursor()
-            cursor.execute("SELECT SYSDATE FROM DUAL")
-            db_time = cursor.fetchone()[0]
-            
-            elapsed = (time.time() - start_time) * 1000
-            details['connect_time_ms'] = round(elapsed, 2)
-            details['db_time'] = str(db_time)
-            details['end_time'] = format_timestamp()
-            
-            cursor.close()
-            connection.close()
-            
-            return CheckResult(
-                name='数据库连接检查',
-                status=Status.OK,
-                message=f'连接正常，耗时: {details["connect_time_ms"]}ms',
-                details=details,
-                timestamp=format_timestamp()
-            )
+        status = test_result.get('status', Status.ERROR)
+        message = test_result.get('message', '')
         
-        except ImportError:
-            return CheckResult(
-                name='数据库连接检查',
-                status=Status.SKIPPED,
-                message='未安装 cx_Oracle 库，无法检查数据库',
-                details=details,
-                timestamp=format_timestamp()
-            )
-        except cx_Oracle.DatabaseError as e:
-            error_obj, = e.args
-            return CheckResult(
-                name='数据库连接检查',
-                status=Status.ERROR,
-                message=f'数据库错误: {error_obj.code} - {error_obj.message}',
-                details=details,
-                timestamp=format_timestamp(),
-                error=f"ORA-{error_obj.code}"
-            )
-        except Exception as e:
-            return CheckResult(
-                name='数据库连接检查',
-                status=Status.ERROR,
-                message='连接异常',
-                details=details,
-                timestamp=format_timestamp(),
-                error=str(e)
-            )
+        return CheckResult(
+            name='数据库连接检查',
+            status=status,
+            message=message,
+            details=test_result.get('details', {}),
+            timestamp=format_timestamp(),
+            error=test_result.get('error'),
+            suggestion=test_result.get('suggestion')
+        )
     
     def check_time_diff(self) -> CheckResult:
-        if not self.db_config:
+        driver_info = get_driver_info()
+        
+        if not driver_info['available']:
             return CheckResult(
                 name='数据库时间差检查',
                 status=Status.SKIPPED,
-                message='未配置数据库连接信息',
-                details={},
+                message='未安装 Oracle 数据库驱动',
+                details={'driver_info': driver_info},
                 timestamp=format_timestamp()
             )
         
-        details = {
-            'start_time': format_timestamp()
-        }
+        db_conn = DatabaseConnection(self.db_config)
+        time_result = db_conn.check_time_diff()
         
-        try:
-            import cx_Oracle
-            
-            dsn = cx_Oracle.makedsn(
-                self.db_config['ip'],
-                self.db_config['port'],
-                service_name=self.db_config['service_name']
-            )
-            
-            connection = cx_Oracle.connect(
-                user=self.db_config['user'],
-                password=self.db_config['pwd'],
-                dsn=dsn
-            )
-            
-            cursor = connection.cursor()
-            cursor.execute("SELECT SYSDATE FROM DUAL")
-            db_time = cursor.fetchone()[0]
-            local_time = datetime.now()
-            
-            time_diff = abs((local_time - db_time).total_seconds())
-            
-            details['local_time'] = local_time.strftime('%Y-%m-%d %H:%M:%S')
-            details['db_time'] = str(db_time)
-            details['time_diff_seconds'] = round(time_diff, 2)
-            details['tolerance'] = self.config.get('env_check', {}).get('time_tolerance_seconds', 300)
-            
-            cursor.close()
-            connection.close()
-            
-            tolerance = details['tolerance']
-            if time_diff <= tolerance:
-                return CheckResult(
-                    name='数据库时间差检查',
-                    status=Status.OK,
-                    message=f'时间同步正常，差值: {time_diff:.2f}秒',
-                    details=details,
-                    timestamp=format_timestamp()
-                )
-            else:
-                return CheckResult(
-                    name='数据库时间差检查',
-                    status=Status.WARNING,
-                    message=f'时间差超过容忍值: {time_diff:.2f}秒 > {tolerance}秒',
-                    details=details,
-                    timestamp=format_timestamp()
-                )
+        status = time_result.get('status', Status.ERROR)
+        message = time_result.get('message', '')
         
-        except ImportError:
-            return CheckResult(
-                name='数据库时间差检查',
-                status=Status.SKIPPED,
-                message='未安装 cx_Oracle 库，无法检查数据库',
-                details=details,
-                timestamp=format_timestamp()
-            )
-        except Exception as e:
-            return CheckResult(
-                name='数据库时间差检查',
-                status=Status.ERROR,
-                message='检查失败',
-                details=details,
-                timestamp=format_timestamp(),
-                error=str(e)
-            )
+        return CheckResult(
+            name='数据库时间差检查',
+            status=status,
+            message=message,
+            details=time_result.get('details', {}),
+            timestamp=format_timestamp(),
+            error=time_result.get('error')
+        )
