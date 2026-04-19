@@ -41,6 +41,26 @@ DEFAULT_CONFIG = {
         "disk_threshold": 80,
         "ntp_servers": ["ntp.aliyun.com", "time.windows.com", "pool.ntp.org"],
         "time_tolerance_seconds": 300,
+        "final_inspect_required_items": [
+            {
+                "name": "一般检查",
+                "item_code": "0101",
+                "required": true,
+                "description": "总检必检项目"
+            },
+            {
+                "name": "心电图",
+                "item_code": "0201",
+                "required": true,
+                "description": "总检必检项目"
+            },
+            {
+                "name": "胸片",
+                "item_code": "0301",
+                "required": true,
+                "description": "总检必检项目"
+            }
+        ],
         "system_variables": [
             {
                 "name": "身份证号校验控制",
@@ -65,6 +85,38 @@ DEFAULT_CONFIG = {
                 "value_column": "xtsz",
                 "expected_value": "1",
                 "description": "1=取计算值（需要年龄修正表基础数据）, 0=取录入值"
+            },
+            {
+                "name": "电测听结果计算方式",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "1=自动计算（需要计算模板基础数据）, 0=手工录入"
+            },
+            {
+                "name": "项目结果自动关联医生",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "1=启用自动关联, 0=禁用"
+            },
+            {
+                "name": "总检医生自动刷新",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "1",
+                "description": "1=启用自动刷新, 0=禁用"
+            },
+            {
+                "name": "默认体检类型",
+                "table": "tj_xtsz_xtbl",
+                "key_column": "xtmc",
+                "value_column": "xtsz",
+                "expected_value": "",
+                "description": "系统默认体检类型代码"
             },
             {
                 "name": "强制总检开关",

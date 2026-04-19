@@ -608,6 +608,112 @@ class HISHelperTool:
         .port-item:last-child {{ border-bottom: none; }}
         .port-open {{ color: #28a745; font-weight: bold; }}
         .port-closed {{ color: #dc3545; font-weight: bold; }}
+        .network-analysis {{
+            margin-top: 10px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+        }}
+        .network-ping {{
+            margin-top: 8px;
+            padding: 10px;
+            background: #e8f5e9;
+            border-radius: 6px;
+        }}
+        .ping-item {{
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+        }}
+        .ping-status {{ font-weight: bold; }}
+        .ping-success {{ color: #28a745; }}
+        .ping-failed {{ color: #dc3545; }}
+        .ping-rtt {{ color: #667eea; font-family: monospace; }}
+        .ping-loss {{ 
+            color: #6c757d;
+            font-family: monospace;
+            font-weight: bold;
+        }}
+        .network-diagnostic {{
+            margin-top: 8px;
+            padding: 10px;
+            background: #fff3e0;
+            border-radius: 6px;
+        }}
+        .diag-suggestion-item {{
+            padding: 3px 0;
+            color: #5d4037;
+            margin-left: 4px;
+        }}
+        .risk-score-card {{
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            color: white;
+            margin-bottom: 20px;
+        }}
+        .risk-score-circle {{
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,255,255,0.2);
+            border: 3px solid rgba(255,255,255,0.5);
+        }}
+        .risk-score-value {{
+            font-size: 36px;
+            font-weight: bold;
+        }}
+        .risk-score-label {{
+            font-size: 14px;
+            margin-top: 4px;
+        }}
+        .risk-score-info {{
+            text-align: left;
+        }}
+        .risk-score-info h3 {{
+            margin: 0 0 10px 0;
+            font-size: 18px;
+        }}
+        .risk-score-info p {{
+            margin: 5px 0;
+            font-size: 14px;
+            opacity: 0.9;
+        }}
+        .risk-details {{
+            margin-top: 20px;
+        }}
+        .risk-category {{
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }}
+        .risk-category h4 {{
+            margin: 0 0 10px 0;
+            color: #1a1a2e;
+        }}
+        .risk-item {{
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }}
+        .risk-item:last-child {{ border-bottom: none; }}
+        .risk-item-name {{ color: #495057; }}
+        .risk-item-status {{ font-weight: bold; }}
+        .risk-status-ok {{ color: #28a745; }}
+        .risk-status-warning {{ color: #ffc107; }}
+        .risk-status-error {{ color: #dc3545; }}
+        .risk-status-skipped {{ color: #6c757d; }}
         .uncategorized-box {{
             background: #f8f9fa;
             border: 1px dashed #6c757d;
@@ -754,6 +860,8 @@ class HISHelperTool:
             {self._build_summary_cards()}
         </div>
         
+        {self._build_risk_score_section()}
+        
         <div class="tab-container">
             <div class="tab-nav">
                 <button class="active" onclick="switchTab('main-checks')">📋 检查结果</button>
@@ -802,6 +910,196 @@ class HISHelperTool:
 </html>"""
         
         return html
+    
+    def _calculate_risk_score(self) -> Dict[str, Any]:
+        risk_score = 100
+        risk_details = {
+            'environment': {'items': [], 'score': 100, 'weight': 20},
+            'database': {'items': [], 'score': 100, 'weight': 30},
+            'api': {'items': [], 'score': 100, 'weight': 25},
+            'log': {'items': [], 'score': 100, 'weight': 15},
+            'business': {'items': [], 'score': 100, 'weight': 10}
+        }
+        
+        env_results = self.results.get('environment', {})
+        for name, result in env_results.items():
+            status = result.get('status', Status.OK)
+            item = {'name': result.get('name', name), 'status': status}
+            
+            if status == Status.ERROR:
+                risk_details['environment']['items'].append({**item, 'deduction': 15})
+            elif status == Status.WARNING:
+                risk_details['environment']['items'].append({**item, 'deduction': 5})
+            elif status == Status.SKIPPED:
+                risk_details['environment']['items'].append({**item, 'deduction': 0})
+            else:
+                risk_details['environment']['items'].append({**item, 'deduction': 0})
+        
+        env_errors = sum(1 for r in env_results.values() if r.get('status') == Status.ERROR)
+        env_warnings = sum(1 for r in env_results.values() if r.get('status') == Status.WARNING)
+        risk_details['environment']['score'] = max(0, 100 - env_errors * 15 - env_warnings * 5)
+        
+        db_results = self.results.get('database', {})
+        for name, result in db_results.items():
+            status = result.get('status', Status.OK)
+            item = {'name': result.get('name', name), 'status': status}
+            
+            if status == Status.ERROR:
+                risk_details['database']['items'].append({**item, 'deduction': 20})
+            elif status == Status.WARNING:
+                risk_details['database']['items'].append({**item, 'deduction': 8})
+            elif status == Status.SKIPPED:
+                risk_details['database']['items'].append({**item, 'deduction': 0})
+            else:
+                risk_details['database']['items'].append({**item, 'deduction': 0})
+        
+        db_errors = sum(1 for r in db_results.values() if r.get('status') == Status.ERROR)
+        db_warnings = sum(1 for r in db_results.values() if r.get('status') == Status.WARNING)
+        risk_details['database']['score'] = max(0, 100 - db_errors * 20 - db_warnings * 8)
+        
+        api_results = self.results.get('api', {})
+        for name, result in api_results.items():
+            if name == 'summary':
+                continue
+            status = result.get('status', Status.OK)
+            item = {'name': result.get('name', name), 'status': status}
+            
+            if status == Status.ERROR:
+                risk_details['api']['items'].append({**item, 'deduction': 25})
+            elif status == Status.WARNING:
+                risk_details['api']['items'].append({**item, 'deduction': 10})
+            else:
+                risk_details['api']['items'].append({**item, 'deduction': 0})
+        
+        api_errors = sum(1 for n, r in api_results.items() if n != 'summary' and r.get('status') == Status.ERROR)
+        api_warnings = sum(1 for n, r in api_results.items() if n != 'summary' and r.get('status') == Status.WARNING)
+        risk_details['api']['score'] = max(0, 100 - api_errors * 25 - api_warnings * 10)
+        
+        log_result = self.results.get('log', {})
+        scan_result = log_result.get('scan_result', {})
+        log_findings = scan_result.get('findings_count', 0)
+        if log_findings > 0:
+            risk_details['log']['items'].append({'name': '日志异常发现', 'status': Status.WARNING, 'deduction': min(30, log_findings * 5)})
+            risk_details['log']['score'] = max(0, 100 - min(30, log_findings * 5))
+        else:
+            risk_details['log']['items'].append({'name': '日志异常发现', 'status': Status.OK, 'deduction': 0})
+            risk_details['log']['score'] = 100
+        
+        business_checks = []
+        for name, result in env_results.items():
+            if name in ['final_inspect_config', 'final_inspect_required_items', 'hearing_age_correction', 'hearing_calc_template', 'pinyin_code_check']:
+                business_checks.append(result)
+        
+        for result in business_checks:
+            status = result.get('status', Status.OK)
+            item = {'name': result.get('name', '业务检查'), 'status': status}
+            
+            if status == Status.ERROR:
+                risk_details['business']['items'].append({**item, 'deduction': 20})
+            elif status == Status.WARNING:
+                risk_details['business']['items'].append({**item, 'deduction': 10})
+            else:
+                risk_details['business']['items'].append({**item, 'deduction': 0})
+        
+        biz_errors = sum(1 for r in business_checks if r.get('status') == Status.ERROR)
+        biz_warnings = sum(1 for r in business_checks if r.get('status') == Status.WARNING)
+        risk_details['business']['score'] = max(0, 100 - biz_errors * 20 - biz_warnings * 10)
+        
+        weighted_score = (
+            risk_details['environment']['score'] * risk_details['environment']['weight'] / 100 +
+            risk_details['database']['score'] * risk_details['database']['weight'] / 100 +
+            risk_details['api']['score'] * risk_details['api']['weight'] / 100 +
+            risk_details['log']['score'] * risk_details['log']['weight'] / 100 +
+            risk_details['business']['score'] * risk_details['business']['weight'] / 100
+        )
+        
+        risk_score = round(weighted_score)
+        
+        risk_level = 'low'
+        risk_color = '#28a745'
+        risk_text = '低风险'
+        
+        if risk_score < 60:
+            risk_level = 'high'
+            risk_color = '#dc3545'
+            risk_text = '高风险'
+        elif risk_score < 80:
+            risk_level = 'medium'
+            risk_color = '#ffc107'
+            risk_text = '中风险'
+        
+        return {
+            'score': risk_score,
+            'level': risk_level,
+            'color': risk_color,
+            'text': risk_text,
+            'details': risk_details
+        }
+    
+    def _build_risk_score_section(self) -> str:
+        risk_info = self._calculate_risk_score()
+        score = risk_info['score']
+        color = risk_info['color']
+        text = risk_info['text']
+        details = risk_info['details']
+        
+        category_names = {
+            'environment': '🌍 环境配置',
+            'database': '🗄️ 数据库',
+            'api': '🌐 接口服务',
+            'log': '📝 日志状态',
+            'business': '💼 业务配置'
+        }
+        
+        category_html = ''
+        for key, cat_info in details.items():
+            items_html = ''
+            for item in cat_info['items']:
+                status_class = {
+                    Status.OK: 'risk-status-ok',
+                    Status.WARNING: 'risk-status-warning',
+                    Status.ERROR: 'risk-status-error',
+                    Status.SKIPPED: 'risk-status-skipped'
+                }.get(item.get('status'), 'risk-status-skipped')
+                
+                status_text = get_status_text(item.get('status'))
+                items_html += f"""
+                    <div class="risk-item">
+                        <span class="risk-item-name">{item['name']}</span>
+                        <span class="risk-item-status {status_class}">{status_text}</span>
+                    </div>
+                """
+            
+            score_color = '#28a745' if cat_info['score'] >= 80 else ('#ffc107' if cat_info['score'] >= 60 else '#dc3545')
+            category_html += f"""
+                <div class="risk-category">
+                    <h4>{category_names.get(key, key)} <span style="float: right; color: {score_color};">{cat_info['score']}分 (权重 {cat_info['weight']}%)</span></h4>
+                    {items_html}
+                </div>
+            """
+        
+        return f"""
+        <div class="section">
+            <h2>🎯 业务风险评分</h2>
+            
+            <div class="risk-score-card">
+                <div class="risk-score-circle">
+                    <span class="risk-score-value">{score}</span>
+                    <span class="risk-score-label">综合评分</span>
+                </div>
+                <div class="risk-score-info">
+                    <h3 style="color: {color};">{text}</h3>
+                    <p>• 评分基于 5 个维度的加权计算</p>
+                    <p>• 满分 100 分，得分越高风险越低</p>
+                    <p>• 建议优先处理红色标记的问题</p>
+                </div>
+            </div>
+            
+            <div class="risk-details">
+                {category_html}
+            </div>
+        </div>
+        """
     
     def _build_summary_cards(self) -> str:
         env_ok = 0
@@ -980,17 +1278,53 @@ class HISHelperTool:
             api_status = result['status']
             details = result.get('details', {})
             
+            network_analysis_html = ''
+            ping_html = ''
             port_scan_html = ''
+            diag_html = ''
+            
+            if details.get('ping_result'):
+                ping_result = details['ping_result']
+                success = ping_result.get('success', False)
+                packet_loss = ping_result.get('packet_loss', 0)
+                avg_rtt = ping_result.get('avg_rtt_ms')
+                
+                status_text = '✅ 通' if success else '❌ 不通'
+                status_class = 'ping-success' if success else 'ping-failed'
+                
+                rtt_text = f'{avg_rtt}ms' if avg_rtt else 'N/A'
+                
+                ping_html = f"""
+                    <div class="network-ping">
+                        <div style="font-weight: bold; margin-bottom: 8px; color: #28a745;">
+                            📶 Ping 测试 ({ping_result.get('host', 'N/A')})
+                        </div>
+                        <div class="ping-item">
+                            <span>连通性</span>
+                            <span class="ping-status {status_class}">{status_text}</span>
+                        </div>
+                        <div class="ping-item">
+                            <span>平均延迟</span>
+                            <span class="ping-rtt">{rtt_text}</span>
+                        </div>
+                        <div class="ping-item">
+                            <span>丢包率</span>
+                            <span class="ping-loss">{packet_loss}%</span>
+                        </div>
+                    </div>
+                """
+            
             if details.get('port_scan'):
                 port_scan = details['port_scan']
                 port_items = ''
                 for port_str, port_info in port_scan['ports'].items():
                     port_status = 'port-open' if port_info['open'] else 'port-closed'
                     port_text = '✅ 开放' if port_info['open'] else '❌ 关闭/过滤'
+                    rtt_text = f' ({port_info.get("response_time_ms", "N/A")}ms)' if port_info.get('response_time_ms') else ''
                     port_items += f"""
                         <div class="port-item">
                             <span>端口 {port_str}</span>
-                            <span class="{port_status}">{port_text}</span>
+                            <span class="{port_status}">{port_text}{rtt_text}</span>
                         </div>
                     """
                 port_scan_html = f"""
@@ -1002,12 +1336,57 @@ class HISHelperTool:
                     </div>
                 """
             
+            if details.get('network_diagnostic'):
+                diag = details['network_diagnostic']
+                suggestions = diag.get('suggestions', [])
+                network_status = diag.get('network_status', 'unknown')
+                
+                status_map = {
+                    'unreachable': '🚫 无法到达',
+                    'unstable': '⚠️ 网络不稳定',
+                    'network_ok_service_down': '✅ 网络正常，服务问题',
+                    'network_ok_all_ports_closed': '✅ 网络正常，端口问题',
+                    'network_ok': '✅ 网络正常',
+                    'unknown': '❓ 未知状态'
+                }
+                
+                suggestion_items = ''
+                for s in suggestions:
+                    suggestion_items += f'<div class="diag-suggestion-item">• {s}</div>'
+                
+                diag_html = f"""
+                    <div class="network-diagnostic">
+                        <div style="font-weight: bold; margin-bottom: 8px; color: #fd7e14;">
+                            🔍 网络诊断分析
+                        </div>
+                        <div style="margin-bottom: 8px;">
+                            <strong>状态:</strong> {status_map.get(network_status, network_status)}
+                        </div>
+                        <div style="margin-top: 8px;">
+                            <strong>建议:</strong>
+                            {suggestion_items}
+                        </div>
+                    </div>
+                """
+            
+            if ping_html or port_scan_html or diag_html:
+                network_analysis_html = f"""
+                    <div class="network-analysis">
+                        <div style="font-weight: bold; margin-bottom: 12px; color: #e83e8c; border-bottom: 1px solid #eee; padding-bottom: 8px;">
+                            🌐 网络层分析
+                        </div>
+                        {ping_html}
+                        {port_scan_html}
+                        {diag_html}
+                    </div>
+                """
+            
             api_list_html += f"""
                 <div class="api-item">
                     <div>
                         <div class="api-name">{name}</div>
                         <div class="api-url">{details.get('url', 'N/A')}</div>
-                        {port_scan_html}
+                        {network_analysis_html}
                     </div>
                     <span class="result-status {api_status}">{get_status_text(api_status)}</span>
                 </div>

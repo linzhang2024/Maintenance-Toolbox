@@ -493,6 +493,142 @@ class DatabaseConnection:
             result['error'] = str(e)
         
         return result
+    
+    def check_hearing_calc_template(self) -> Dict[str, Any]:
+        result = {
+            'name': '电测听计算模板检查',
+            'table': 'hearing_calc_template',
+            'status': Status.ERROR,
+            'record_count': 0,
+            'message': '',
+            'error': None,
+            'var_type': 'hearing_calc_template'
+        }
+        
+        if not ORACLE_DRIVER_AVAILABLE:
+            result['status'] = Status.SKIPPED
+            result['message'] = '未安装 Oracle 数据库驱动，跳过检查'
+            return result
+        
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                try:
+                    cursor.execute("SELECT COUNT(*) FROM hearing_calc_template")
+                    count = cursor.fetchone()[0]
+                    result['record_count'] = count
+                    
+                    if count == 0:
+                        result['status'] = Status.ERROR
+                        result['message'] = '⚠️ 电测听计算模板表(hearing_calc_template)为空！'
+                        result['suggestion'] = '请导入电测听计算模板基础数据，否则电测听结果自动计算功能无法正常使用。'
+                    else:
+                        result['status'] = Status.OK
+                        result['message'] = f'电测听计算模板基础数据正常，共 {count} 条记录'
+                except oracle.DatabaseError as e:
+                    error_obj = e.args[0] if e.args else None
+                    if error_obj and hasattr(error_obj, 'code') and error_obj.code == 942:
+                        result['status'] = Status.ERROR
+                        result['message'] = '⚠️ 表 hearing_calc_template 不存在！'
+                        result['suggestion'] = '请联系开发商创建电测听计算模板表并导入基础数据。'
+                    else:
+                        raise
+                
+                cursor.close()
+                
+        except Exception as e:
+            result['status'] = Status.ERROR
+            result['message'] = str(e)
+            result['error'] = str(e)
+        
+        return result
+    
+    def check_required_items_in_db(
+        self,
+        required_items: List[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        if required_items is None:
+            required_items = []
+        
+        result = {
+            'name': '总检必选项目检查',
+            'status': Status.OK,
+            'message': '',
+            'missing_items': [],
+            'found_items': [],
+            'error': None,
+            'var_type': 'required_items_check'
+        }
+        
+        if not ORACLE_DRIVER_AVAILABLE:
+            result['status'] = Status.SKIPPED
+            result['message'] = '未安装 Oracle 数据库驱动，跳过检查'
+            return result
+        
+        if not required_items:
+            result['status'] = Status.WARNING
+            result['message'] = '未配置必选项目清单，请在 config.json 中配置 final_inspect_required_items'
+            return result
+        
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                for item in required_items:
+                    if not item.get('required', False):
+                        continue
+                    
+                    item_code = item.get('item_code', '')
+                    item_name = item.get('name', '')
+                    
+                    if not item_code:
+                        continue
+                    
+                    try:
+                        query = """
+                            SELECT COUNT(*) FROM tj_xmzd 
+                            WHERE xmbm = :1 OR xmmc = :2
+                        """
+                        cursor.execute(query, (item_code, item_name))
+                        count = cursor.fetchone()[0]
+                        
+                        if count > 0:
+                            result['found_items'].append({
+                                'item_code': item_code,
+                                'item_name': item_name,
+                                'status': 'found'
+                            })
+                        else:
+                            result['missing_items'].append({
+                                'item_code': item_code,
+                                'item_name': item_name,
+                                'status': 'missing'
+                            })
+                    except Exception as e:
+                        result['missing_items'].append({
+                            'item_code': item_code,
+                            'item_name': item_name,
+                            'status': 'error',
+                            'error': str(e)
+                        })
+                
+                cursor.close()
+                
+                if result['missing_items']:
+                    result['status'] = Status.ERROR
+                    result['message'] = f'发现 {len(result["missing_items"])} 个必选项目缺失'
+                    result['suggestion'] = '请在项目字典(tj_xmzd)中添加缺失的必选项目，或调整 config.json 中的 final_inspect_required_items 配置'
+                else:
+                    result['status'] = Status.OK
+                    result['message'] = f'所有 {len(result["found_items"])} 个必选项目配置完整'
+                
+        except Exception as e:
+            result['status'] = Status.ERROR
+            result['message'] = str(e)
+            result['error'] = str(e)
+        
+        return result
 
 
 def get_driver_info() -> Dict[str, Any]:

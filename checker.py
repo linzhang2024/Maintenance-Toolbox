@@ -259,6 +259,7 @@ class EnvironmentScanner:
         system_vars_details = results['system_vars'].details.get('variables', [])
         
         hearing_age_correction_var = None
+        hearing_calc_template_var = None
         pinyin_control_var = None
         final_inspect_var = None
         final_inspect_control_var = None
@@ -266,6 +267,8 @@ class EnvironmentScanner:
         for var in system_vars_details:
             if '电测听小结展示方式' in var.get('name', ''):
                 hearing_age_correction_var = var
+            if '电测听结果计算方式' in var.get('name', ''):
+                hearing_calc_template_var = var
             if '拼音码转换控制' in var.get('name', ''):
                 pinyin_control_var = var
             if '强制总检开关' in var.get('name', ''):
@@ -276,6 +279,9 @@ class EnvironmentScanner:
         if hearing_age_correction_var and hearing_age_correction_var.get('actual_value') == '1':
             results['hearing_age_correction'] = self.check_hearing_age_correction()
         
+        if hearing_calc_template_var and hearing_calc_template_var.get('actual_value') == '1':
+            results['hearing_calc_template'] = self.check_hearing_calc_template()
+        
         if pinyin_control_var and pinyin_control_var.get('actual_value') == '1':
             results['pinyin_code_check'] = self.check_pinyin_code_empty()
         
@@ -284,6 +290,10 @@ class EnvironmentScanner:
                 final_inspect_var,
                 final_inspect_control_var
             )
+            
+            required_items = self.env_config.get('final_inspect_required_items', [])
+            if required_items:
+                results['final_inspect_required_items'] = self.check_required_items(required_items)
         
         return results
     
@@ -345,6 +355,71 @@ class EnvironmentScanner:
                 'tables_checked': check_result.get('tables_checked', []),
                 'empty_count': check_result.get('empty_count', 0),
                 'trigger_reason': '拼音码转换控制=1，自动检查常用项目拼音码'
+            },
+            timestamp=format_timestamp(),
+            error=check_result.get('error'),
+            suggestion=check_result.get('suggestion')
+        )
+    
+    def check_hearing_calc_template(self) -> CheckResult:
+        driver_info = get_driver_info()
+        
+        if not driver_info['available']:
+            return CheckResult(
+                name='电测听计算模板检查',
+                status=Status.SKIPPED,
+                message='未安装 Oracle 数据库驱动，跳过检查',
+                details={'driver_info': driver_info},
+                timestamp=format_timestamp()
+            )
+        
+        db_conn = DatabaseConnection(self.db_config)
+        check_result = db_conn.check_hearing_calc_template()
+        
+        status = check_result.get('status', Status.ERROR)
+        message = check_result.get('message', '')
+        
+        return CheckResult(
+            name='电测听计算模板检查',
+            status=status,
+            message=message,
+            details={
+                'table': check_result.get('table'),
+                'record_count': check_result.get('record_count'),
+                'trigger_reason': '电测听结果计算方式=1，自动检查计算模板'
+            },
+            timestamp=format_timestamp(),
+            error=check_result.get('error'),
+            suggestion=check_result.get('suggestion')
+        )
+    
+    def check_required_items(self, required_items: List[Dict[str, Any]]) -> CheckResult:
+        driver_info = get_driver_info()
+        
+        if not driver_info['available']:
+            return CheckResult(
+                name='总检必选项目检查',
+                status=Status.SKIPPED,
+                message='未安装 Oracle 数据库驱动，跳过检查',
+                details={'driver_info': driver_info},
+                timestamp=format_timestamp()
+            )
+        
+        db_conn = DatabaseConnection(self.db_config)
+        check_result = db_conn.check_required_items_in_db(required_items)
+        
+        status = check_result.get('status', Status.ERROR)
+        message = check_result.get('message', '')
+        
+        return CheckResult(
+            name='总检必选项目检查',
+            status=status,
+            message=message,
+            details={
+                'required_items_count': len(required_items),
+                'found_items': check_result.get('found_items', []),
+                'missing_items': check_result.get('missing_items', []),
+                'trigger_reason': '强制总检开关=1，自动检查必选项目清单'
             },
             timestamp=format_timestamp(),
             error=check_result.get('error'),
